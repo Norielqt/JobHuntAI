@@ -1,3 +1,4 @@
+
 # Huntly — AI Job Hunter
 
 Personal job hunting web app. Scrapes multiple platforms, lets you bulk-select jobs,
