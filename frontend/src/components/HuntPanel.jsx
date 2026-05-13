@@ -7,8 +7,8 @@ const PLATFORMS = [
   { id: "linkedin",       label: "LinkedIn",         color: "#0a66c2", type: "both" },
   { id: "remoteok",       label: "RemoteOK",         color: "#06d6a0", type: "both" },
   { id: "jobstreet",      label: "JobStreet",        color: "#f05537", type: "full-time" },
-  { id: "freelancer",     label: "Freelancer.com",   color: "#0071c2", type: "freelance" },
-  { id: "indeed",         label: "Indeed",           color: "#2164f3", type: "full-time" },
+  { id: "freelancer",     label: "Freelancer.com",   color: "#0071c2", type: "freelance", disabled: true },
+  { id: "indeed",         label: "Indeed",           color: "#2164f3", type: "full-time", disabled: true },
   { id: "weworkremotely", label: "WeWorkRemotely",   color: "#a855f7", type: "both" },
 ];
 
@@ -45,7 +45,7 @@ export default function HuntPanel({ resume, onSaveJobs, onUpdateJob, credentials
       const params = new URLSearchParams({
         q: keywords,
         platforms: active.join(","),
-        limit: "10",
+        limit: "25",
         ...(jobType !== "both" && { job_type: jobType }),
       });
       const res = await fetch(`${backendUrl}/scrape?${params}`);
@@ -151,13 +151,15 @@ export default function HuntPanel({ resume, onSaveJobs, onUpdateJob, credentials
         {PLATFORMS.map(p => (
           <button
             key={p.id}
-            className={`platform-chip ${platforms[p.id] ? "on" : "off"}`}
+            className={`platform-chip ${platforms[p.id] ? "on" : "off"} ${p.disabled ? "disabled" : ""}`}
             style={{ "--pc": p.color }}
-            onClick={() => togglePlatform(p.id)}
+            onClick={() => !p.disabled && togglePlatform(p.id)}
+            disabled={p.disabled}
+            title={p.disabled ? "Coming soon" : undefined}
           >
             <span className="platform-dot" />
             {p.label}
-            <span className="platform-type">{p.type}</span>
+            <span className="platform-type">{p.disabled ? "soon" : p.type}</span>
           </button>
         ))}
       </div>

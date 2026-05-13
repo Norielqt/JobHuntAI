@@ -140,13 +140,97 @@ async def scrape_jobs(req: ScrapeRequest):
 async def scrape_jobs_get(
     q: str = Query(..., description="Search keywords"),
     platforms: str = Query("upwork,linkedin,remoteok", description="Comma-separated platform IDs"),
-    limit: int = Query(10, ge=1, le=30, description="Max results per platform"),
+    limit: int = Query(25, ge=1, le=50, description="Max results per platform"),
     job_type: Optional[str] = Query(None, description="freelance | full-time | both"),
 ):
     """GET version for easy browser/curl testing."""
     platform_list = [p.strip() for p in platforms.split(",") if p.strip()]
     req = ScrapeRequest(keywords=q, platforms=platform_list, limit_per_platform=limit)
     return await scrape_jobs(req)
+
+
+# ── Login sessions via headed browser ─────────────────────────────────────────
+
+LOGIN_URLS = {
+    "upwork":       "https://www.upwork.com/ab/account-security/login",
+    "linkedin":     "https://www.linkedin.com/login",
+    "onlinejobsph": "https://www.onlinejobs.ph/login",
+}
+
+# Track in-progress logins so we don't open two windows at once
+_login_lock: dict[str, bool] = {}
+
+
+@app.post("/platforms/{platform_id}/login")
+async def start_platform_login(platform_id: str):
+    """
+    Opens a visible (headed) browser window on the user's local machine so they
+    can log in manually. Once the page navigates away from the login URL the
+    session cookies are saved automatically.
+
+    Runs Playwright in a dedicated thread with its own ProactorEventLoop so it
+    doesn't conflict with uvicorn's SelectorEventLoop on Windows.
+    """
+    if platform_id not in LOGIN_URLS:
+        raise HTTPException(404, f"No login flow for platform '{platform_id}'")
+    if _login_lock.get(platform_id):
+        raise HTTPException(409, f"Login already in progress for {platform_id}")
+
+    _login_lock[platform_id] = True
+    try:
+        import concurrent.futures
+        from scrapers.base import COOKIES_DIR, USER_AGENT
+
+        login_url = LOGIN_URLS[platform_id]
+        cookies_file = COOKIES_DIR / f"{platform_id}.json"
+
+        def _run_login_browser():
+            """Runs in a thread with its own event loop — avoids Windows event loop conflict."""
+            import asyncio, json
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(
+                    headless=False,
+                    args=["--no-sandbox", "--disable-infobars"],
+                )
+                context = browser.new_context(
+                    user_agent=USER_AGENT,
+                    viewport={"width": 1280, "height": 800},
+                    locale="en-US",
+                    timezone_id="Asia/Manila",
+                )
+                context.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+                )
+                page = context.new_page()
+                page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
+
+                # Wait until the user navigates away from the login page (max 3 min)
+                try:
+                    page.wait_for_url(
+                        lambda url: "login" not in url.lower() and login_url not in url,
+                        timeout=180_000,
+                    )
+                except Exception:
+                    pass  # timeout — still save whatever cookies exist
+
+                cookies = context.cookies()
+                cookies_file.write_text(json.dumps(cookies, indent=2))
+                logger.info(f"[login] Saved {len(cookies)} cookies for {platform_id}")
+                browser.close()
+                return len(cookies)
+
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            n_cookies = await loop.run_in_executor(pool, _run_login_browser)
+
+        return {"ok": True, "platform": platform_id, "cookies": n_cookies}
+    except Exception as e:
+        logger.error(f"[login] {platform_id} failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e) or repr(e))
+    finally:
+        _login_lock[platform_id] = False
 
 
 @app.post("/generate", response_model=GenerateResponse)

@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 
 const LOGIN_PLATFORMS = [
-  { id: "upwork",      label: "Upwork",        color: "#14a800", required: true,  cmd: "python -m scrapers.upwork --login" },
-  { id: "onlinejobsph",label: "OnlineJobs.ph", color: "#e05c1e", required: true,  cmd: "python -m scrapers.onlinejobsph --login" },
-  { id: "linkedin",    label: "LinkedIn",       color: "#0a66c2", required: false, cmd: "python -m scrapers.linkedin --login" },
+  { id: "upwork",      label: "Upwork",        color: "#14a800", required: true  },
+  { id: "onlinejobsph",label: "OnlineJobs.ph", color: "#e05c1e", required: true  },
+  { id: "linkedin",    label: "LinkedIn",       color: "#0a66c2", required: false },
 ];
 
 export default function AccountPanel({ credentials, onSave }) {
@@ -14,7 +14,7 @@ export default function AccountPanel({ credentials, onSave }) {
   const [checking, setChecking]     = useState(false);
   const [platformStatuses, setPlatformStatuses] = useState({});
   const [saved, setSaved]           = useState(false);
-  const [copied, setCopied]         = useState(null);
+  const [loginStates, setLoginStates] = useState({});
 
   const checkBackend = async (url = backendUrl) => {
     setChecking(true);
@@ -40,10 +40,24 @@ export default function AccountPanel({ credentials, onSave }) {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const copy = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
+  const connectPlatform = async (platformId) => {
+    setLoginStates(s => ({ ...s, [platformId]: "connecting" }));
+    try {
+      const res = await fetch(`${backendUrl}/platforms/${platformId}/login`, { method: "POST" });
+      if (res.status === 409) {
+        setLoginStates(s => ({ ...s, [platformId]: "already-open" }));
+      } else if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setLoginStates(s => ({ ...s, [platformId]: `error: ${err.detail || res.status}` }));
+      } else {
+        // Login flow completed — refresh statuses
+        setLoginStates(s => ({ ...s, [platformId]: "done" }));
+        await checkBackend(backendUrl);
+        setTimeout(() => setLoginStates(s => ({ ...s, [platformId]: null })), 3000);
+      }
+    } catch (e) {
+      setLoginStates(s => ({ ...s, [platformId]: "error: backend unreachable" }));
+    }
   };
 
   return (
@@ -118,30 +132,36 @@ export default function AccountPanel({ credentials, onSave }) {
       {/* ── Platform Sessions ── */}
       <div className="section-label" style={{ marginBottom: 8 }}>Platform Sessions</div>
       <div className="page-subtitle" style={{ marginBottom: 16 }}>
-        Copy the login command, run it in your terminal (venv activated), log in when the browser opens, then press Enter.
+        Click <strong>Connect</strong> — a browser window opens on your screen. Log in normally, then the session is saved automatically.
       </div>
       <div className="acc-card">
         {LOGIN_PLATFORMS.map((p, i) => {
           const active = platformStatuses[p.id];
+          const ls = loginStates[p.id];
+          const isConnecting = ls === "connecting";
           return (
             <div key={p.id} className="plat-row" style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)", paddingTop: i === 0 ? 0 : 14, marginTop: i === 0 ? 0 : 14 }}>
               <div className="plat-row-left">
                 <span className="plat-dot" style={{ background: p.color }} />
                 <div>
                   <div className="plat-name">{p.label}</div>
-                  <div className="plat-note">{p.required ? "Login required" : "Optional — reduces rate limiting"}</div>
+                  <div className="plat-note">{p.required ? "Login required to search" : "Optional — reduces rate limiting"}</div>
                 </div>
               </div>
               <div className="plat-row-right">
+                {ls && ls !== "done" && ls !== "connecting" && (
+                  <span style={{ fontSize: 11, color: "var(--red)", fontFamily: "var(--mono)" }}>{ls}</span>
+                )}
                 <span className={`sess-badge ${active ? "active" : "missing"}`}>
                   {active === undefined ? "—" : active ? "Session active" : "Not connected"}
                 </span>
                 <button
                   className="btn btn-ghost"
-                  style={{ fontSize: 11 }}
-                  onClick={() => copy(p.cmd, p.id)}
+                  style={{ fontSize: 12 }}
+                  disabled={isConnecting}
+                  onClick={() => connectPlatform(p.id)}
                 >
-                  {copied === p.id ? "✓ Copied" : "Copy command"}
+                  {isConnecting ? <><span className="spinner" /> Waiting…</> : ls === "done" ? "✓ Connected" : active ? "Re-connect" : "Connect"}
                 </button>
               </div>
             </div>
@@ -159,7 +179,7 @@ export default function AccountPanel({ credentials, onSave }) {
 
       <div className="acc-note">
         <span style={{ color: "var(--accent)" }}>◆</span>
-        &nbsp;Sessions are stored in <code>cookies/</code> in the project root. They expire eventually — re-run the login command if a platform stops returning results.
+        &nbsp;Sessions are stored in <code>cookies/</code> in the project root. They expire eventually — click <strong>Re-connect</strong> if a platform stops returning results.
       </div>
 
       <style>{`
